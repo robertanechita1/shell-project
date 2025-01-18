@@ -12,9 +12,12 @@
 
 char *history_c[1024];  // Vector de șiruri pentru comenzile introduse
 int cmd_count = 1;
+char temp_input[200][200];
 
+int procesare_comanda(char *c);
 void handle_pipe(char *command);
 void process_command(char *cmd);
+
 
 //afisam numele shell-ului si path ul inainte de a scrie comanda
 void show(){ 
@@ -508,6 +511,115 @@ void handle_pipe(char *command) {
         perror("Failed to exec command 2");
     }
 }
+
+char *trim_spaces(char *str) {
+    while (*str == ' ') str++;
+    
+    char *end = str + strlen(str) - 1;
+    while (end > str && *end == ' ') {
+        *end = '\0';
+        end--;
+    }
+    return str;
+}
+
+void comenzi_logice(char *linie_comanda) {
+    char temp[200];
+    strcpy(temp, linie_comanda);
+
+    // Pointer pentru strtok_r
+    char *saveptr;
+
+    if (strstr(temp, "&&") != NULL) {
+        char *cmd = strtok_r(temp, "&&", &saveptr);  // strtok_r e thread-safe
+        while (cmd != NULL) {
+            cmd = trim_spaces(cmd);
+
+            int status = procesare_comanda(cmd);
+            if(status == 0){
+                break;
+            }
+
+            cmd = strtok_r(NULL, "&&", &saveptr);
+        }
+    }
+    else if(strstr(temp, "||") != NULL){
+        char *cmd = strtok_r(temp, "||", &saveptr);  // strtok_r e thread-safe
+        while (cmd != NULL) {
+            cmd = trim_spaces(cmd);
+            int status;
+            
+            if(strcmp(cmd, "false") == 0)
+                status = 1;
+            else if(strcmp(cmd, "true") == 0)
+                status = 0;
+            else
+                status = procesare_comanda(cmd);
+
+            if(status != 0){
+                break;
+            }
+
+            cmd = strtok_r(NULL, "||", &saveptr);
+        }    
+    }
+}
+
+void comanda_echo(int cnt){
+    for(int i = 1; i < cnt; i++){
+        for(int c = 0; c < strlen(temp_input[i]); c++)
+            if (temp_input[i][c] != '"')
+                printf("%c", temp_input[i][c]);
+        printf(" ");
+    }
+        
+    printf("\n");
+}
+
+void comanda_cd(int cnt){
+    if (cnt != 2) {
+        printf("Eroare: Trebuie sa specifici calea directorului.\n");
+        return;
+    }
+    
+    int result = chdir(temp_input[1]);
+    if (result == 0) {
+        printf("Director schimbat la: %s\n", temp_input[1]);
+    } else {
+        perror("Eroare la schimbarea directorului");
+    }
+}
+
+void f_suspend() {
+    printf("Programul este suspendat. Apăsați Enter pentru a relua.\n");
+    getchar(); 
+}
+
+int procesare_comanda(char *c){
+    char linie_comanda[200]; 
+    strcpy(linie_comanda, c);
+    char *token = strtok(c, " ");
+    int cnt = 0;
+    while (token != NULL)
+    {
+        strcpy(temp_input[cnt], token);            
+        cnt++;
+        token = strtok(NULL, " ");
+    }
+    
+    
+    if(strstr(linie_comanda, "&&") || strstr(linie_comanda, "||"))
+        comenzi_logice(linie_comanda);
+    else if (strncmp(linie_comanda, "cd", 2) == 0)
+        comanda_cd(cnt);
+    else if (strncmp(linie_comanda, "echo", 4) == 0)
+        comanda_echo(cnt);
+    else
+        process_command(linie_comanda);
+
+}
+
+
 void process_command(char *command) {
     char *cmd = strtok(command, " "); // prima parte a comenzii pentru a det actiunea
     char *arg = strtok(NULL, " ");    // al doilea argument daca exista
@@ -554,6 +666,8 @@ void process_command(char *command) {
         printf("Comanda %s nu a fost gasita.\n", cmd);
     }
 }
+
+
 int main(int argv, char *argc[])
 {
     printf("Puteti iesi folosind CTRL+C sau comanda exit.\n");
@@ -562,8 +676,10 @@ int main(int argv, char *argc[])
     while(1)
     {
         readInput(command);
-        if(command[0] != '\0')
-            process_command(command); 
+        if (strcmp(command, "suspend") == 0) 
+            f_suspend();
+        else if(command[0] != '\0')
+            procesare_comanda(command); 
     }
 
     return 0;
