@@ -7,9 +7,14 @@
 #include <time.h> // pt conversia timestamp-ului
 #include <pwd.h> // pt info despre utilizator
 #include <grp.h> // pt info despre grup
+#include <sys/wait.h>  // pt wait()
+#include <ctype.h>
 
 char *history_c[1024];  // Vector de șiruri pentru comenzile introduse
 int cmd_count = 1;
+
+void handle_pipe(char *command);
+void process_command(char *cmd);
 
 //afisam numele shell-ului si path ul inainte de a scrie comanda
 void show(){ 
@@ -425,7 +430,130 @@ void f_ls_lar(){
         printf("%s\n", files[i]); //nume fisier
     }
 }
+void f_mkdir(const char *dir) {
+    if (mkdir(dir, 0755) == -1) { // 0755 sunt permisiunile obisnuite (rwxr-xr-x)
+        perror("Eroare la crearea directorului");
+    } else {
+        printf("Directorul '%s' a fost creat.\n", dir);
+    }
+}
 
+void f_rmdir(const char *dir) {
+    if (rmdir(dir) == -1) {
+        perror("Eroare la stergerea directorului");
+    } else {
+        printf("Directorul '%s' a fost sters.\n", dir);
+    }
+}
+
+
+void trim(char *str) {
+    char *end;
+    while(isspace((unsigned char)*str)) str++;
+    if(*str == 0)  // toate spatiile?
+        return;
+    end = str + strlen(str) - 1;
+    while(end > str && isspace((unsigned char)*end)) end--;
+    // scrie terminator
+    end[1] = '\0';
+}
+
+char **parse_command(char *command) {
+    static char *args[10];
+    int i = 0;
+    char *token = strtok(command, " ");
+    while (token != NULL) {
+        args[i++] = token;
+        token = strtok(NULL, " ");
+    }
+    args[i] = NULL;
+    return args;
+}
+
+void handle_pipe(char *command) {
+    int fds[2];
+    if (pipe(fds) == -1) {
+        perror("Failed to create pipe");
+        return;
+    }
+
+    char *part1 = strtok(command, "|");
+    char *part2 = strtok(NULL, "");
+
+    trim(part1);
+    trim(part2);
+
+    char **args1 = parse_command(part1);
+    char **args2 = parse_command(part2);
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("Failed to fork");
+        return;
+    }
+    
+    if (pid == 0) { // Procesul copil
+        close(fds[0]); // inchide capatul de citire
+        dup2(fds[1], STDOUT_FILENO); // redirectioneaza stdout la pipe
+        close(fds[1]);
+        execvp(args1[0], args1);
+        perror("Failed to exec command 1");
+        exit(1);
+    } else { // Procesul parinte
+        close(fds[1]); // inchide capatul de scriere
+        dup2(fds[0], STDIN_FILENO); // redirectioneaza stdin de la pipe
+        close(fds[0]);
+        wait(NULL); // asteapta terminarea procesului copil
+        execvp(args2[0], args2);
+        perror("Failed to exec command 2");
+    }
+}
+void process_command(char *command) {
+    char *cmd = strtok(command, " "); // prima parte a comenzii pentru a det actiunea
+    char *arg = strtok(NULL, " ");    // al doilea argument daca exista
+
+    if (strcmp(cmd, "exit") == 0) {
+        printf("Iesire din shell.\n");
+        exit(0);
+    } else if (strcmp(cmd, "ls") == 0) {
+        if (arg == NULL) {
+            f_ls();
+        } else {
+            if (strcmp(arg, "-l") == 0) f_ls_l();
+            else if (strcmp(arg, "-a") == 0) f_ls_a();
+            else if (strcmp(arg, "-r") == 0) f_ls_r();
+            else if (strcmp(arg, "-ar") == 0 || strcmp(arg, "-ra") == 0) f_ls_ar();
+            else if (strcmp(arg, "-la") == 0 || strcmp(arg, "-al") == 0) f_ls_la();
+            else if (strcmp(arg, "-lr") == 0 || strcmp(arg, "-rl") == 0) f_ls_lr();
+            else if (strcmp(arg, "-lar") == 0 || strcmp(arg, "-lra") == 0 || strcmp(arg, "-arl") == 0 || strcmp(arg, "-alr") == 0 || strcmp(arg, "-rla") == 0 || strcmp(arg, "-ral") == 0) f_ls_lar();
+            else printf("Argumentul %s nu este recunoscut.\n", arg);
+        }
+    } else if (strcmp(cmd, "history") == 0) {
+        f_history();
+    } else if (strcmp(cmd, "mkdir") == 0) {
+        if (arg == NULL) {
+            printf("Specificati numele directorului.\n");
+        } else {
+            if (mkdir(arg, 0755) == -1) { 
+                perror("Eroare la crearea directorului");
+            } else {
+                printf("Directorul '%s' a fost creat.\n", arg);
+            }
+        }
+    } else if (strcmp(cmd, "rmdir") == 0) {
+        if (arg == NULL) {
+            printf("Specificati numele directorului pentru a fi sters.\n");
+        } else {
+            if (rmdir(arg) == -1) { // sterge directorul
+                perror("Eroare la stergerea directorului");
+            } else {
+                printf("Directorul '%s' a fost sters.\n", arg);
+            }
+        }
+    } else {
+        printf("Comanda %s nu a fost gasita.\n", cmd);
+    }
+}
 int main(int argv, char *argc[])
 {
     printf("Puteti iesi folosind CTRL+C sau comanda exit.\n");
@@ -434,49 +562,8 @@ int main(int argv, char *argc[])
     while(1)
     {
         readInput(command);
-        if (strcmp(command, "exit") == 0) { //iesirea din shell
-            printf("Iesire din shell.\n");
-            exit(0);
-        }
-        else if(strcmp(command, "ls") == 0){ //afisarea fisierelor/dir din directorul curent
-            f_ls();
-            continue;
-        }
-        else if(strcmp(command, "ls -l") == 0){//afisarea detaliata a fisierelor/dir din directorul curent
-            f_ls_l();
-            continue;
-        }
-        else if(strcmp(command, "ls -a") == 0){//afisarea fisierelor/dir din directorul curent, inclusiv cele ascunse
-            f_ls_a();
-            continue;
-        }
-        else if(strcmp(command, "ls -r") == 0){//afisarea fisierelor/dir din directorul curent in ordine inversa
-            f_ls_r();
-            continue;
-        }
-        else if(strcmp(command, "ls -ar") == 0){//afisarea fisierelor/dir din directorul curent in ordine inversa, inclusiv cele ascunse
-            f_ls_ar();
-            continue;
-        }
-        else if(strcmp(command, "ls -la") == 0){//afisarea detaliata a fisierelor/dir din directorul curent, inclusiv cele ascunse
-            f_ls_la();
-            continue;
-        }
-        else if(strcmp(command, "ls -lr") == 0){//afisarea detaliata a fisierelor/dir din directorul curent in ordine inversa
-            f_ls_lr();
-            continue;
-        }
-        else if(strcmp(command, "ls -lar") == 0){//afisarea detaliata a fisierelor/dir din directorul curent in ordine inversa, inclusiv cele ascunse
-            f_ls_lar();
-            continue;
-        }
-        else if(strcmp(command, "history") == 0){ //istoricul comenzilor pana in momentul actual
-            f_history();
-            continue;
-        }
-        else{
-            printf("Comanda %s nu a fost gasita.\n", command);
-        }
+        if(command[0] != '\0')
+            process_command(command); 
     }
 
     return 0;
