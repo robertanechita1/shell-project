@@ -457,29 +457,6 @@ void f_pwd() {
     }
 }
 
-void trim(char *str) {
-    char *start = str; 
-    char *end;
-
-    // elimină spatiile de la inceput
-    while (isspace((unsigned char)*start)) start++;
-    
-    // verifica daca sirul este format doar din spatii
-    if (*start == 0) {
-        *str = 0; // seteaza sirul ca fiind gol
-        return;
-    }
-
-    // elimina spatiile de la sfarsit
-    end = start + strlen(start) - 1;
-    while (end > start && isspace((unsigned char)*end)) end--;
-    end[1] = '\0'; // Pune terminatorul de șir
-
-    // muta sirul trimuit la inceputul bufferului daca este necesar
-    if (str != start) {
-        memmove(str, start, end + 2 - start);
-    }
-}
 
 char **parse_command(char *command) {
     static char *args[10]; // array de pointeri catre argumentele comenzi
@@ -571,10 +548,6 @@ void comanda_cd(int cnt){
     }
 }
 
-void f_suspend() {
-    printf("Programul este suspendat. Apăsați Enter pentru a relua.\n");
-    getchar(); 
-}
 
 void comanda_pipe(char *linie_comanda) {
     char temp[200];
@@ -738,9 +711,7 @@ int main(int argv, char *argc[])
     while(1)
     {
         readInput(command);
-        if (strcmp(command, "suspend") == 0) 
-            f_suspend();
-        else if(command[0] != '\0')
+        if(command[0] != '\0')
             procesare_comanda(command); 
     }
 
