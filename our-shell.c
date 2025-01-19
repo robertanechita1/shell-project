@@ -15,7 +15,6 @@ int cmd_count = 1;
 char temp_input[200][200];
 
 int procesare_comanda(char *c);
-void handle_pipe(char *command);
 void process_command(char *cmd);
 
 
@@ -494,55 +493,6 @@ char **parse_command(char *command) {
     return args;
 }
 
-void handle_pipe(char *command) {
-    int fds[2]; // array pentru descriptorii pipe-ului
-    if (pipe(fds) == -1) {
-        perror("Failed to create pipe");
-        return;
-    }
-
-    char *part1 = strtok(command, "|"); // prima parte a comenzii înainte de pipe
-    char *part2 = strtok(NULL, ""); // a doua parte a comenzii, după pipe
-    trim(part1); // curata spatiile din jurul comenzilor
-    trim(part2);
-    
-    if (!part1 || !part2) {
-        fprintf(stderr, "Pipe syntax error.\n"); 
-        return;
-    }
-    
-    char **args1 = parse_command(part1); // parseaza prima comanda
-    char **args2 = parse_command(part2); // parseaza a doua comanda
-    
-    pid_t pid = fork(); // creaza un proces copil
-    if (pid == -1) {
-        perror("Failed to fork");
-        return;
-    }
-    
-    if (pid == 0) { // Procesul copil
-        close(fds[0]); // inchide capatul de citire
-        if (dup2(fds[1], STDOUT_FILENO) == -1) {
-            perror("dup2 failed");
-            exit(1);
-        }
-        close(fds[1]); // inchide capatul de scriere dupa duplicare
-        execvp(args1[0], args1); // Executa prima comanda
-        perror("Failed to exec command 1");
-        exit(1); // termina procesul copil daca execvp esueaza
-    } else { // Procesul parinte
-        close(fds[1]); // inchide capatul de scriere
-        if (dup2(fds[0], STDIN_FILENO) == -1) {
-            perror("dup2 failed");
-            exit(1);
-        }
-        close(fds[0]); // inchide capatul de citire dupa duplicare
-        wait(NULL); // asteapta terminarea procesului copil
-        execvp(args2[0], args2); // executa a doua comanda
-        perror("Failed to exec command 2");
-    }
-}
-
 char *trim_spaces(char *str) {
     while (*str == ' ') str++;
     
@@ -626,6 +576,83 @@ void f_suspend() {
     getchar(); 
 }
 
+void comanda_pipe(char *linie_comanda) {
+    char temp[200];
+    strcpy(temp, linie_comanda);
+
+    char *cmd1 = strtok(temp, "|");
+    char *cmd2 = strtok(NULL, "");
+
+    if (cmd1 == NULL || cmd2 == NULL) {
+        printf("Format invalid pentru pipe.\n");
+        return;
+    }
+
+    cmd1 = trim_spaces(cmd1);
+    cmd2 = trim_spaces(cmd2);
+    
+
+    int fd[2];
+    if (pipe(fd) == -1) {
+        perror("Eroare la crearea pipe-ului");
+        return;
+    }
+
+    pid_t pid1 = fork();
+    if (pid1 == 0){
+        close(fd[0]);  
+        dup2(fd[1], STDOUT_FILENO);  
+        close(fd[1]);
+
+        char *argv1[] = {"/bin/sh", "-c", cmd1, NULL};
+        execve("/bin/sh", argv1, NULL);  
+        perror("Eroare la executia cmd1");
+        exit(1);
+    }
+
+    pid_t pid2 = fork();
+    if (pid2 == 0) {  // Al doilea proces copil
+        close(fd[1]);  
+        dup2(fd[0], STDIN_FILENO);  
+        close(fd[0]);
+
+        char *argv2[] = {"/bin/sh", "-c", cmd2, NULL};
+        execve("/bin/sh", argv2, NULL);  
+        perror("Eroare la executia cmd2");
+        exit(1);
+    }
+
+    close(fd[0]);
+    close(fd[1]);
+
+    wait(NULL);
+    wait(NULL);   
+}
+
+void comanda_grep(int cnt){
+    if (cnt < 3){
+        printf("Utilizare incorecta grep\n");
+        return;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        char *argv[cnt + 1];
+        argv[0] = "/bin/grep";
+        argv[1] = temp_input[1];
+        for (int i = 2; i < cnt; i++) {
+            argv[i] = temp_input[i];
+        }
+        argv[cnt] = NULL;
+
+        execve("/bin/grep", argv, NULL);
+        perror("Eroare la executia comenzii grep");
+    } else {
+        wait(NULL);
+    }
+}
+
+
 int procesare_comanda(char *c){
     char linie_comanda[200]; 
     strcpy(linie_comanda, c);
@@ -638,25 +665,22 @@ int procesare_comanda(char *c){
         token = strtok(NULL, " ");
     }
     
-    
     if(strstr(linie_comanda, "&&") || strstr(linie_comanda, "||"))
         comenzi_logice(linie_comanda);
+    else if(strstr(linie_comanda, "|"))
+        comanda_pipe(linie_comanda);
     else if (strncmp(linie_comanda, "cd", 2) == 0)
         comanda_cd(cnt);
     else if (strncmp(linie_comanda, "echo", 4) == 0)
         comanda_echo(cnt);
+    else if (strncmp(linie_comanda, "grep", 4) == 0)
+        comanda_grep(cnt);
     else
         process_command(linie_comanda);
 
 }
 
-
 void process_command(char *command) {
-    if (strstr(command, "|")) {
-        handle_pipe(command);
-        return; 
-    }
-
     char *cmd = strtok(command, " "); // prima parte a comenzii pentru a det actiunea
     char *arg = strtok(NULL, " ");    // al doilea argument daca exista
 
