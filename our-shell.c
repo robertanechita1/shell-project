@@ -10,7 +10,7 @@
 #include <sys/wait.h>  // pt wait()
 #include <ctype.h>
 
-char *history_c[1024];  // Vector de șiruri pentru comenzile introduse
+char *history_c[1024];  // Vector de siruri pentru comenzile introduse
 int cmd_count = 1;
 char temp_input[200][200];
 
@@ -40,7 +40,6 @@ void readInput(char *input){
         perror("Eroare la citirea comenzii");
         exit(1); 
     }
-
     input[strcspn(input, "\n")] = 0; // elimin \n de la final (daca are)
 
     history_c[cmd_count] = strdup(input); //copiez numele comenzii in istoric
@@ -433,6 +432,7 @@ void f_ls_lar(){
         printf("%s\n", files[i]); //nume fisier
     }
 }
+
 void f_mkdir(const char *dir) {
     if (mkdir(dir, 0755) == -1) { // 0755 sunt permisiunile obisnuite (rwxr-xr-x)
         perror("Eroare la crearea directorului");
@@ -449,47 +449,72 @@ void f_rmdir(const char *dir) {
     }
 }
 
+void f_pwd() {
+    char cwd[1024];  // buffer pentru stocarea caii directorului curent
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        printf("%s\n", cwd);  // afiseaza calea absoluta a directorului curent
+    } else {
+        perror("Eroare la afisarea directorului curent");  
+    }
+}
 
 void trim(char *str) {
+    char *start = str; 
     char *end;
-    while(isspace((unsigned char)*str)) str++;
-    if(*str == 0)  // toate spatiile?
+
+    // elimină spatiile de la inceput
+    while (isspace((unsigned char)*start)) start++;
+    
+    // verifica daca sirul este format doar din spatii
+    if (*start == 0) {
+        *str = 0; // seteaza sirul ca fiind gol
         return;
-    end = str + strlen(str) - 1;
-    while(end > str && isspace((unsigned char)*end)) end--;
-    // scrie terminator
-    end[1] = '\0';
+    }
+
+    // elimina spatiile de la sfarsit
+    end = start + strlen(start) - 1;
+    while (end > start && isspace((unsigned char)*end)) end--;
+    end[1] = '\0'; // Pune terminatorul de șir
+
+    // muta sirul trimuit la inceputul bufferului daca este necesar
+    if (str != start) {
+        memmove(str, start, end + 2 - start);
+    }
 }
 
 char **parse_command(char *command) {
-    static char *args[10];
+    static char *args[10]; // array de pointeri catre argumentele comenzi
     int i = 0;
-    char *token = strtok(command, " ");
+    char *token = strtok(command, " "); 
     while (token != NULL) {
-        args[i++] = token;
-        token = strtok(NULL, " ");
+        args[i++] = token; // stocheaza fiecare argument in array
+        token = strtok(NULL, " "); 
     }
     args[i] = NULL;
     return args;
 }
 
 void handle_pipe(char *command) {
-    int fds[2];
+    int fds[2]; // array pentru descriptorii pipe-ului
     if (pipe(fds) == -1) {
         perror("Failed to create pipe");
         return;
     }
 
-    char *part1 = strtok(command, "|");
-    char *part2 = strtok(NULL, "");
-
-    trim(part1);
+    char *part1 = strtok(command, "|"); // prima parte a comenzii înainte de pipe
+    char *part2 = strtok(NULL, ""); // a doua parte a comenzii, după pipe
+    trim(part1); // curata spatiile din jurul comenzilor
     trim(part2);
-
-    char **args1 = parse_command(part1);
-    char **args2 = parse_command(part2);
-
-    pid_t pid = fork();
+    
+    if (!part1 || !part2) {
+        fprintf(stderr, "Pipe syntax error.\n"); 
+        return;
+    }
+    
+    char **args1 = parse_command(part1); // parseaza prima comanda
+    char **args2 = parse_command(part2); // parseaza a doua comanda
+    
+    pid_t pid = fork(); // creaza un proces copil
     if (pid == -1) {
         perror("Failed to fork");
         return;
@@ -497,17 +522,23 @@ void handle_pipe(char *command) {
     
     if (pid == 0) { // Procesul copil
         close(fds[0]); // inchide capatul de citire
-        dup2(fds[1], STDOUT_FILENO); // redirectioneaza stdout la pipe
-        close(fds[1]);
-        execvp(args1[0], args1);
+        if (dup2(fds[1], STDOUT_FILENO) == -1) {
+            perror("dup2 failed");
+            exit(1);
+        }
+        close(fds[1]); // inchide capatul de scriere dupa duplicare
+        execvp(args1[0], args1); // Executa prima comanda
         perror("Failed to exec command 1");
-        exit(1);
+        exit(1); // termina procesul copil daca execvp esueaza
     } else { // Procesul parinte
         close(fds[1]); // inchide capatul de scriere
-        dup2(fds[0], STDIN_FILENO); // redirectioneaza stdin de la pipe
-        close(fds[0]);
+        if (dup2(fds[0], STDIN_FILENO) == -1) {
+            perror("dup2 failed");
+            exit(1);
+        }
+        close(fds[0]); // inchide capatul de citire dupa duplicare
         wait(NULL); // asteapta terminarea procesului copil
-        execvp(args2[0], args2);
+        execvp(args2[0], args2); // executa a doua comanda
         perror("Failed to exec command 2");
     }
 }
@@ -621,6 +652,11 @@ int procesare_comanda(char *c){
 
 
 void process_command(char *command) {
+    if (strstr(command, "|")) {
+        handle_pipe(command);
+        return; 
+    }
+
     char *cmd = strtok(command, " "); // prima parte a comenzii pentru a det actiunea
     char *arg = strtok(NULL, " ");    // al doilea argument daca exista
 
@@ -642,6 +678,8 @@ void process_command(char *command) {
         }
     } else if (strcmp(cmd, "history") == 0) {
         f_history();
+    } else if (strcmp(cmd, "pwd") == 0) {
+        f_pwd();
     } else if (strcmp(cmd, "mkdir") == 0) {
         if (arg == NULL) {
             printf("Specificati numele directorului.\n");
@@ -656,7 +694,7 @@ void process_command(char *command) {
         if (arg == NULL) {
             printf("Specificati numele directorului pentru a fi sters.\n");
         } else {
-            if (rmdir(arg) == -1) { // sterge directorul
+            if (rmdir(arg) == -1) { 
                 perror("Eroare la stergerea directorului");
             } else {
                 printf("Directorul '%s' a fost sters.\n", arg);
